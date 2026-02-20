@@ -1,6 +1,6 @@
 //// CHANGE UPSTREAM DoH service provider here ////
-const URL_UPSTREAM_DNS_QUERY = 'https://dns.google/dns-query';
-const URL_UPSTREAM_RESOLVE = 'https://dns.google/resolve';
+const DEFAULT_URL_UPSTREAM_DNS_QUERY = 'https://dns.google/dns-query';
+const DEFAULT_URL_UPSTREAM_RESOLVE = 'https://dns.google/resolve';
 //// CHANGE UPSTREAM DoH service provider here ////
 
 // Constants for Content-Type and Accept headers
@@ -17,15 +17,31 @@ const APPL_DNS_JSON = 'application/dns-json'
 
 //   default:   https://cfworker.user.workers.dev/resolve?YYYYY
 //   modified:  https://cfworker.user.workers.dev/masked-resolve?YYYYY
-const REQ_QUERY_PATHNAME = '/dns-query'
-const REQ_RESOLVE_PATHNAME = '/resolve'
+const DEFAULT_REQ_QUERY_PATHNAME = '/dns-query'
+const DEFAULT_REQ_RESOLVE_PATHNAME = '/resolve'
 
 // developers.cloudflare.com/workers/runtime-apis/fetch-event/#syntax-module-worker
 export default {
     async fetch(r, env, ctx) {
-        return handleRequest(r);
+        return handleRequest(r, env);
     },
 };
+
+function normalizePath(pathname, fallbackPath) {
+    const rawPath = (pathname || '').toString().trim();
+    if (!rawPath) return fallbackPath;
+    const withSlash = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+    return withSlash.replace(/\/+$/, '') || fallbackPath;
+}
+
+function getConfig(env = {}) {
+    return {
+        URL_UPSTREAM_DNS_QUERY: (env.UPSTREAM_DNS_QUERY || env.URL_UPSTREAM_DNS_QUERY || DEFAULT_URL_UPSTREAM_DNS_QUERY).toString(),
+        URL_UPSTREAM_RESOLVE: (env.UPSTREAM_RESOLVE || env.URL_UPSTREAM_RESOLVE || DEFAULT_URL_UPSTREAM_RESOLVE).toString(),
+        REQ_QUERY_PATHNAME: normalizePath(env.REQ_QUERY_PATHNAME, DEFAULT_REQ_QUERY_PATHNAME),
+        REQ_RESOLVE_PATHNAME: normalizePath(env.REQ_RESOLVE_PATHNAME, DEFAULT_REQ_RESOLVE_PATHNAME),
+    };
+}
 
 
 /**
@@ -40,24 +56,24 @@ export default {
  * @returns {string} - The truncated IPv6 address with a /56 prefix.
  */
 function truncateIPv6To56(ipv6) {
-  // Expand "::" to have 8 segments
-  let segments = ipv6.split(':');
+    // Expand "::" to have 8 segments
+    let segments = ipv6.split(':');
 
-  // If the address has fewer than 8 segments due to "::", fill in the missing segments
-  if (segments.length < 8) {
-    const missingSegments = 8 - segments.length;
-    const emptySegments = new Array(missingSegments).fill('0000');
-    segments.splice(segments.indexOf(''), 0, ...emptySegments);
-  }
+    // If the address has fewer than 8 segments due to "::", fill in the missing segments
+    if (segments.length < 8) {
+        const missingSegments = 8 - segments.length;
+        const emptySegments = new Array(missingSegments).fill('0000');
+        segments.splice(segments.indexOf(''), 0, ...emptySegments);
+    }
 
-  // Ensure each segment is 4 digits long, pad with 0s if needed
-  segments = segments.map(seg => seg.padStart(4, '0'));
+    // Ensure each segment is 4 digits long, pad with 0s if needed
+    segments = segments.map(seg => seg.padStart(4, '0'));
 
-  // truncate the 5th segment's last two characters to "00"
-  segments[4] = segments[4].slice(0, 2) + '00'; // Modify the last 2 digits of the 5th segment
+    // truncate the 5th segment's last two characters to "00"
+    segments[4] = segments[4].slice(0, 2) + '00'; // Modify the last 2 digits of the 5th segment
 
-  // Keep first 5 segments, rejoin the segments and add the trailing 0s
-  return segments.slice(0, 5).join(':') + ':0000:0000:0000';
+    // Keep first 5 segments, rejoin the segments and add the trailing 0s
+    return segments.slice(0, 5).join(':') + ':0000:0000:0000';
 }
 
 /**
@@ -66,16 +82,16 @@ function truncateIPv6To56(ipv6) {
  * @returns {Object|null} ECS Data { family, subnet, prefix } or null if not applicable
  */
 function getECSData(request) {
-  let ip = request.headers.get("CF-Connecting-IP");
-  if (!ip) return null;
+    let ip = request.headers.get("CF-Connecting-IP");
+    if (!ip) return null;
 
-  if (ip.includes(":")) { // IPv6
-      let truncatedIPv6 = truncateIPv6To56(ip); // Truncate to /56
-      return { family: 2, subnet: truncatedIPv6, prefix: 56 };
-  } else { // IPv4
-      let truncatedIPv4 = ip.split(".").slice(0, 3).join(".") + ".0"; // Truncate to /24
-      return { family: 1, subnet: truncatedIPv4, prefix: 24 };
-  }
+    if (ip.includes(":")) { // IPv6
+        let truncatedIPv6 = truncateIPv6To56(ip); // Truncate to /56
+        return { family: 2, subnet: truncatedIPv6, prefix: 56 };
+    } else { // IPv4
+        let truncatedIPv4 = ip.split(".").slice(0, 3).join(".") + ".0"; // Truncate to /24
+        return { family: 1, subnet: truncatedIPv4, prefix: 24 };
+    }
 }
 
 /**
@@ -88,65 +104,65 @@ function getECSData(request) {
  * @throws {Error} If the IP address is invalid.
  */
 function encodeECStoBuffer(family, subnet, prefixLength) {
-  let addressBytes;
+    let addressBytes;
 
-  // Convert IP address to bytes
-  // IP address already filled with 0s for missing segments
-  //            already padded to full size for each segment with heading 0s,
-  //            already trancated to prefix length with trailing 0s
-  if (family === 2) {
-      // IPv6
-      addressBytes = subnet.split(':')
-          .flatMap(part => 
-              part.match(/../g).map(b => parseInt(b, 16))
-          );
-  } else {
-      // IPv4
-      addressBytes = subnet.split('.').map(n => parseInt(n, 10));
-  }
+    // Convert IP address to bytes
+    // IP address already filled with 0s for missing segments
+    //            already padded to full size for each segment with heading 0s,
+    //            already trancated to prefix length with trailing 0s
+    if (family === 2) {
+        // IPv6
+        addressBytes = subnet.split(':')
+            .flatMap(part =>
+                part.match(/../g).map(b => parseInt(b, 16))
+            );
+    } else {
+        // IPv4
+        addressBytes = subnet.split('.').map(n => parseInt(n, 10));
+    }
 
-  if (!addressBytes || addressBytes.length === 0) {
-      throw new Error('Invalid IP address');
-  }
+    if (!addressBytes || addressBytes.length === 0) {
+        throw new Error('Invalid IP address');
+    }
 
-  // We are using fixed prefix lengths of 24 and 56, so do not need to worry about not dividing evenly
-  let addressLength = prefixLength / 8;                // Number of bytes(octects) to keep according to prefix length
-  addressBytes = addressBytes.slice(0, addressLength); // Address (truncated address to prefix length)
+    // We are using fixed prefix lengths of 24 and 56, so do not need to worry about not dividing evenly
+    let addressLength = prefixLength / 8;                // Number of bytes(octects) to keep according to prefix length
+    addressBytes = addressBytes.slice(0, addressLength); // Address (truncated address to prefix length)
 
-  // Create buffer for header + truncated address
-  let ecsLength = 8 + addressBytes.length;
-  let ecsBuffer = new Uint8Array(ecsLength);
-  
-  ecsBuffer.set([                                      // EDNS Client Subnet structure:
-      0x00, 0x08,                                      // uint16::Option Code = 8 (ECS)
-      (ecsLength - 4) >> 8, (ecsLength - 4) & 0xff,    // uint16::Option Length
-      (family >> 8) & 0xff, family & 0xff,             // uint16::Address Family (1 = IPv4, 2 = IPv6)
-      prefixLength, 0x00,                              // uint8::Source Prefix Length, uint8::Scope Prefix Length (always 0)
-      ...addressBytes                                  // variable_length::Address bytes (truncated to prefix length)
-  ]);
+    // Create buffer for header + truncated address
+    let ecsLength = 8 + addressBytes.length;
+    let ecsBuffer = new Uint8Array(ecsLength);
 
-  return ecsBuffer;
+    ecsBuffer.set([                                      // EDNS Client Subnet structure:
+        0x00, 0x08,                                      // uint16::Option Code = 8 (ECS)
+        (ecsLength - 4) >> 8, (ecsLength - 4) & 0xff,    // uint16::Option Length
+        (family >> 8) & 0xff, family & 0xff,             // uint16::Address Family (1 = IPv4, 2 = IPv6)
+        prefixLength, 0x00,                              // uint8::Source Prefix Length, uint8::Scope Prefix Length (always 0)
+        ...addressBytes                                  // variable_length::Address bytes (truncated to prefix length)
+    ]);
+
+    return ecsBuffer;
 }
 
 // Encode to Base64Url format
 function encodeBase64Url(data) {
-  const base64 = btoa(String.fromCharCode(...data));
-  return base64
-      .replace(/\+/g, '-') // Replace '+' with '-'
-      .replace(/\//g, '_') // Replace '/' with '_'
-      .replace(/=+$/, ''); // Remove '=' padding
+    const base64 = btoa(String.fromCharCode(...data));
+    return base64
+        .replace(/\+/g, '-') // Replace '+' with '-'
+        .replace(/\//g, '_') // Replace '/' with '_'
+        .replace(/=+$/, ''); // Remove '=' padding
 }
 
 // Decode from Base64Url format
 function decodeBase64Url(base64Url) {
-  // Convert from Base64Url to standard Base64
-  const base64 = base64Url
-      .replace(/-/g, '+') // Replace '-' with '+'
-      .replace(/_/g, '/') // Replace '_' with '/'
-      .padEnd(base64Url.length + (4 - (base64Url.length % 4)) % 4, '='); // Fix padding if needed
+    // Convert from Base64Url to standard Base64
+    const base64 = base64Url
+        .replace(/-/g, '+') // Replace '-' with '+'
+        .replace(/_/g, '/') // Replace '_' with '/'
+        .padEnd(base64Url.length + (4 - (base64Url.length % 4)) % 4, '='); // Fix padding if needed
 
-  const binary = atob(base64);
-  return new Uint8Array([...binary].map(char => char.charCodeAt(0)));
+    const binary = atob(base64);
+    return new Uint8Array([...binary].map(char => char.charCodeAt(0)));
 }
 
 
@@ -243,9 +259,9 @@ function modifyDNSQuery(originalArrayBuffer, ecsData) {
 * @param {Request} request
 * @returns {Promise<Response>}
 */
-async function dns_query_get(request) {
+async function dns_query_get(request, config) {
     const params = new URL(request.url).searchParams;
-    
+
     let ecsData = getECSData(request);
     if (ecsData) {
         let origBuffer = decodeBase64Url(params.get("dns"));
@@ -253,7 +269,7 @@ async function dns_query_get(request) {
         params.set("dns", encodeBase64Url(newBuffer));
     }
 
-    const url = `${URL_UPSTREAM_DNS_QUERY}?${params.toString()}`;
+    const url = `${config.URL_UPSTREAM_DNS_QUERY}?${params.toString()}`;
     return fetch(url, { method: "GET", headers: { "accept": APPL_DNS_MSG } });
 }
 
@@ -262,18 +278,18 @@ async function dns_query_get(request) {
 * @param {Request} request
 * @returns {Promise<Response>}
 */
-async function dns_resolve_googlejson(request) {
+async function dns_resolve_googlejson(request, config) {
     const params = new URL(request.url).searchParams;
-    
+
     if (!params.has("edns_client_subnet")) {
-      // Extract Client IP to use for ECS
-      let ecsData = getECSData(request);
-      if (ecsData) {
-          params.set("edns_client_subnet", `${ecsData.subnet}/${ecsData.prefix}`);
-      }
+        // Extract Client IP to use for ECS
+        let ecsData = getECSData(request);
+        if (ecsData) {
+            params.set("edns_client_subnet", `${ecsData.subnet}/${ecsData.prefix}`);
+        }
     }
-    
-    const url = `${URL_UPSTREAM_RESOLVE}?${params.toString()}`;
+
+    const url = `${config.URL_UPSTREAM_RESOLVE}?${params.toString()}`;
     return fetch(url, { method: "GET", headers: { "accept": APPL_DNS_JSON } });
 }
 
@@ -282,15 +298,15 @@ async function dns_resolve_googlejson(request) {
 * @param {Request} request
 * @returns {Promise<Response>}
 */
-async function dns_query_post(request) {
+async function dns_query_post(request, config) {
     let requestBody = await request.arrayBuffer(); // Get raw binary DNS request
 
     let ecsData = getECSData(request);
     if (ecsData) {
-      requestBody = modifyDNSQuery(requestBody, ecsData).buffer; // Convert back to ArrayBuffer 
+        requestBody = modifyDNSQuery(requestBody, ecsData).buffer; // Convert back to ArrayBuffer 
     }
 
-    return fetch(URL_UPSTREAM_DNS_QUERY, {
+    return fetch(config.URL_UPSTREAM_DNS_QUERY, {
         method: "POST",
         headers: { "content-type": APPL_DNS_MSG },
         body: requestBody
@@ -326,13 +342,13 @@ function normalizeHeaders(requestHeaders) {
  * @param {Request} request - The original request object.
  * @returns {Promise<Response>} - A promise that resolves to a Response object.
  */
-function routeRequest(method, pathname, headers, searchParams, request) {
-    if (       method === 'POST' && pathname === REQ_QUERY_PATHNAME   && headers.get('content-type') === APPL_DNS_MSG) {
-        return dns_query_post(request);
-    } else if (method === 'GET'  && pathname === REQ_RESOLVE_PATHNAME && headers.get('accept') === APPL_DNS_JSON && searchParams.has('name')) {
-        return dns_resolve_googlejson(request);
-    } else if (method === 'GET'  && pathname === REQ_QUERY_PATHNAME   && headers.get('accept') === APPL_DNS_MSG  && searchParams.has('dns')) {
-        return dns_query_get(request);
+function routeRequest(method, pathname, headers, searchParams, request, config) {
+    if (method === 'POST' && pathname === config.REQ_QUERY_PATHNAME && headers.get('content-type') === APPL_DNS_MSG) {
+        return dns_query_post(request, config);
+    } else if (method === 'GET' && pathname === config.REQ_RESOLVE_PATHNAME && headers.get('accept') === APPL_DNS_JSON && searchParams.has('name')) {
+        return dns_resolve_googlejson(request, config);
+    } else if (method === 'GET' && pathname === config.REQ_QUERY_PATHNAME && headers.get('accept') === APPL_DNS_MSG && searchParams.has('dns')) {
+        return dns_query_get(request, config);
     } else {
         return new Response(null, { status: 404 });
     }
@@ -344,12 +360,13 @@ function routeRequest(method, pathname, headers, searchParams, request) {
  * @param {Request} request - The incoming HTTP request object.
  * @returns {Promise<Response>} - A promise that resolves to the appropriate HTTP response.
  */
-async function handleRequest(request) {
-  // Returning a Promise<Response> allows the worker to yield control back to the runtime
-  // while waiting for the fetch to complete, reducing the billed wall-time.
-  const headers = normalizeHeaders(request.headers);
-  const { method, url } = request;
-  const { searchParams, pathname } = new URL(url);
+async function handleRequest(request, env) {
+    // Returning a Promise<Response> allows the worker to yield control back to the runtime
+    // while waiting for the fetch to complete, reducing the billed wall-time.
+    const config = getConfig(env);
+    const headers = normalizeHeaders(request.headers);
+    const { method, url } = request;
+    const { searchParams, pathname } = new URL(url);
 
-  return routeRequest(method, pathname, headers, searchParams, request);
+    return routeRequest(method, pathname, headers, searchParams, request, config);
 }
