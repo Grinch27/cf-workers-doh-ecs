@@ -29,7 +29,7 @@
 
 - 一键部署到 Cloudflare Workers：
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/<your-account>/cf-workers-doh-ecs)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Grinch27/cf-workers-doh-ecs)
 
 - 或使用 Wrangler 命令行部署：
   1. `npm i -g wrangler`

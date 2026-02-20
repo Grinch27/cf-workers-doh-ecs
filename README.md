@@ -31,7 +31,7 @@ Proxy DoH (DNS-over-HTTPS) with "Auto ECS" (EDNS Client Subnet) on Cloudflare Wo
 
 - One-click deploy to Cloudflare Workers:
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/<your-account>/cf-workers-doh-ecs)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Grinch27/cf-workers-doh-ecs)
 
 - Or deploy with Wrangler:
   1. `npm i -g wrangler`
